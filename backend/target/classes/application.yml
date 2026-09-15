@@ -1,0 +1,22 @@
+server:
+  port: 8080
+spring:
+  datasource:
+    url: jdbc:h2:mem:bookstore;DB_CLOSE_DELAY=-1
+    username: sa
+    password: sa
+  jpa:
+    hibernate.ddl-auto: create-drop
+    show-sql: true
+  h2.console:
+    enabled: true
+    path: /h2-console
+  sql.init.mode: always
+
+app:
+  jwtSecret: bookstore-secret-key-2026-very-long-for-jwt-signing-atleast-256-bits
+  jwtExpirationMs: 86400000
+
+logging:
+  level:
+    com.bookstore: DEBUG
