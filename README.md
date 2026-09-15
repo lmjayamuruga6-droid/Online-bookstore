@@ -96,5 +96,4 @@ npm test
 - Add e2e tests with Cypress
 
 ## Author
-Jaiganesh Muruga - Sr. Technical Lead - 12+ Yrs - Java, Spring Boot, K8s
-Built with TDD principles for Thoughtworks Distributed Developer Kata.
+Jaiganesh
