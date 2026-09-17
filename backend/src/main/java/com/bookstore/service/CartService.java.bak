@@ -100,7 +100,7 @@ public class CartService {
         if (idempotencyKey == null) idempotencyKey = UUID.randomUUID().toString();
         log.info("Checkout start user={} paymentType={} idemKey={}", currentUser.getUsername(), paymentType, idempotencyKey);
 
-        // idempotency - return existing order if key already processed
+        // FIX #14: idempotency - return existing order if key already processed
         var existing = orderRepo.findByIdempotencyKey(idempotencyKey);
         if (existing.isPresent()) {
             log.info("Idempotent checkout hit key={}", idempotencyKey);

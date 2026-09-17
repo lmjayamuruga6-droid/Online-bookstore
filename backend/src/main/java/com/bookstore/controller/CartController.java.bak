@@ -16,7 +16,7 @@ public class CartController {
 
     private final CartService cartService;
 
-    // userId path param - use @AuthenticationPrincipal
+    // FIX #1, #2: No userId path param - use @AuthenticationPrincipal
     @GetMapping
     public CartResponse getCart(@AuthenticationPrincipal User currentUser, Pageable pageable) {
         return cartService.getCart(currentUser, pageable);

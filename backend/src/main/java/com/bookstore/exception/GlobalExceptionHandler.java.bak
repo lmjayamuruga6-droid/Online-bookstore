@@ -12,7 +12,7 @@ import java.util.*;
 @Slf4j
 public class GlobalExceptionHandler {
 
-    // Bean validation -> 400 with field details, not 500
+    // FIX #6: Bean validation -> 400 with field details, not 500
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex) {
         Map<String, String> fieldErrors = new HashMap<>();

@@ -1,34 +1,37 @@
+
 package com.bookstore.service;
-import com.bookstore.dto.AuthRequest.*;
-import com.bookstore.model.User;
+
+import com.bookstore.entity.User;
 import com.bookstore.repository.UserRepository;
-import com.bookstore.security.JwtUtils;
-import org.springframework.beans.factory.annotation.Autowired;
+import com.bookstore.security.JwtTokenProvider;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 @Service
+@RequiredArgsConstructor
+@Slf4j
 public class AuthService {
-    @Autowired private UserRepository userRepo;
-    @Autowired private PasswordEncoder encoder;
-    @Autowired private JwtUtils jwtUtils;
+    private final UserRepository userRepo;
+    private final PasswordEncoder encoder;
+    private final JwtTokenProvider jwtProvider;
 
-    public JwtResponse register(RegisterRequest req) {
-        if(userRepo.existsByUsername(req.getUsername())) throw new IllegalArgumentException("Username already exists");
-        User user = User.builder()
-            .username(req.getUsername())
-            .password(encoder.encode(req.getPassword()))
-            .email(req.getEmail()).build();
+    public String register(String username, String password, String email) {
+        log.info("Register attempt username={}", username);
+        if (userRepo.findByUsername(username).isPresent()) throw new IllegalStateException("User exists");
+        User user = User.builder().username(username).password(encoder.encode(password)).email(email).build();
         userRepo.save(user);
-        String token = jwtUtils.generateToken(req.getUsername());
-        return new JwtResponse(token, req.getUsername());
+        log.info("User registered username={}", username);
+        return jwtProvider.generateToken(username);
     }
 
-    public JwtResponse login(LoginRequest req) {
-        User user = userRepo.findByUsername(req.getUsername())
-            .orElseThrow(() -> new IllegalArgumentException("Invalid credentials"));
-        if(!encoder.matches(req.getPassword(), user.getPassword())) throw new IllegalArgumentException("Invalid credentials");
-        String token = jwtUtils.generateToken(user.getUsername());
-        return new JwtResponse(token, user.getUsername());
+    public String login(String username, String password) {
+        log.info("Login attempt username={}", username);
+        User user = userRepo.findByUsername(username).orElseThrow(() -> new IllegalStateException("Invalid credentials"));
+        if (!encoder.matches(password, user.getPassword())) throw new IllegalStateException("Invalid credentials");
+        String token = jwtProvider.generateToken(username);
+        log.info("Login success username={}", username);
+        return token;
     }
 }

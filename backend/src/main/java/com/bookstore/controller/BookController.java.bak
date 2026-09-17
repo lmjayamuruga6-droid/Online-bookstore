@@ -16,7 +16,7 @@ public class BookController {
 
     private final BookRepository bookRepo;
 
-    //Return DTO not entity,Pagination
+    // FIX #18: Return DTO not entity, #19: Pagination
     @GetMapping
     public Page<BookResponse> list(Pageable pageable) {
         return bookRepo.findAll(pageable).map(b -> BookResponse.builder()
