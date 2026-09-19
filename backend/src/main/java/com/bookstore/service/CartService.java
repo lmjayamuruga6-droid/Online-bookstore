@@ -1,78 +1,160 @@
+
 package com.bookstore.service;
-import com.bookstore.dto.OrderSummary;
-import com.bookstore.exception.*;
-import com.bookstore.model.*;
+
+import com.bookstore.dto.*;
+import com.bookstore.entity.*;
+import com.bookstore.payment.PaymentStrategy;
 import com.bookstore.repository.*;
-import org.springframework.beans.factory.annotation.Autowired;
+import jakarta.persistence.EntityNotFoundException;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import java.time.LocalDateTime;
-import java.util.*;
+import java.util.Map;
+import java.util.UUID;
 
 @Service
+@RequiredArgsConstructor
+@Slf4j 
 public class CartService {
-    @Autowired private CartRepository cartRepo;
-    @Autowired private BookRepository bookRepo;
 
-    public List<CartItem> getCart(String userId) {
-        return cartRepo.findByUserId(userId);
+    private final CartRepository cartRepo;
+    private final CartItemRepository cartItemRepo;
+    private final BookRepository bookRepo;
+    private final OrderRepository orderRepo;
+    private final Map<String, PaymentStrategy> paymentStrategies; // CARD, UPI
+
+    private Cart getOrCreateCart(User user) {
+        return cartRepo.findByUserId(user.getId())
+                .orElseGet(() -> cartRepo.save(Cart.builder().user(user).build()));
+    }
+
+    // Ownership via authenticated User, DTO, pagination
+    @Transactional(readOnly = true)
+    public CartResponse getCart(User currentUser, Pageable pageable) {
+        log.info("Fetching cart for user={}", currentUser.getUsername());
+        Cart cart = getOrCreateCart(currentUser);
+        var items = cart.getItems().stream()
+                .skip((long) pageable.getPageNumber() * pageable.getPageSize())
+                .limit(pageable.getPageSize())
+                .map(ci -> CartItemResponse.builder()
+                        .id(ci.getId())
+                        .bookId(ci.getBook().getId())
+                        .bookTitle(ci.getBook().getTitle())
+                        .quantity(ci.getQuantity())
+                        .priceSnapshot(ci.getPriceSnapshot())
+                        .lineTotal(ci.getPriceSnapshot() * ci.getQuantity())
+                        .build())
+                .toList();
+        double total = cart.getItems().stream().mapToDouble(ci -> ci.getPriceSnapshot()*ci.getQuantity()).sum();
+        return CartResponse.builder().cartId(cart.getId()).items(items).total(total).build();
     }
 
     @Transactional
-    public CartItem addToCart(String userId, Long bookId, int qty) {
-        if(qty <=0) throw new IllegalArgumentException("Quantity must be > 0");
-        Book book = bookRepo.findById(bookId)
-            .orElseThrow(() -> new BookNotFoundException("Book " + bookId + " not found"));
-        if(book.getStock() < qty) throw new InsufficientStockException("Only " + book.getStock() + " left in stock");
-
-        Optional<CartItem> existing = cartRepo.findByUserIdAndBookId(userId, bookId);
-        if(existing.isPresent()) {
-            CartItem item = existing.get();
-            int newQty = item.getQuantity() + qty;
-            if(book.getStock() < newQty) throw new InsufficientStockException("Only " + book.getStock() + " left");
-            item.setQuantity(newQty);
-            return cartRepo.save(item);
+    public CartItemResponse addToCart(User currentUser, Long bookId, int quantity) {
+        log.info("Add to cart user={} bookId={} qty={}", currentUser.getUsername(), bookId, quantity);
+        Cart cart = getOrCreateCart(currentUser);
+        Book book = bookRepo.findById(bookId).orElseThrow(() -> new EntityNotFoundException("Book not found"));
+        // price snapshot
+        CartItem existing = cart.getItems().stream().filter(ci -> ci.getBook().getId().equals(bookId)).findFirst().orElse(null);
+        if (existing != null) {
+            existing.setQuantity(existing.getQuantity() + quantity);
+            cartItemRepo.save(existing);
+            return toResponse(existing);
         }
-        CartItem newItem = CartItem.builder().book(book).quantity(qty).userId(userId).build();
-        return cartRepo.save(newItem);
+        CartItem item = CartItem.builder().cart(cart).book(book).quantity(quantity).priceSnapshot(book.getPrice()).build();
+        cart.getItems().add(item);
+        cartItemRepo.save(item);
+        return toResponse(item);
+    }
+
+    //  No userId param from client, use currentUser + check ownership by cart.user
+    @Transactional
+    public CartItemResponse updateQuantity(User currentUser, Long cartItemId, int quantity) {
+        log.info("Update cart item user={} itemId={} qty={}", currentUser.getUsername(), cartItemId, quantity);
+        CartItem item = cartItemRepo.findById(cartItemId).orElseThrow(() -> new EntityNotFoundException("Item not found"));
+        if (!item.getCart().getUser().getId().equals(currentUser.getId())) {
+            throw new AccessDeniedException("Not your cart item");
+        }
+        item.setQuantity(quantity);
+        return toResponse(cartItemRepo.save(item));
     }
 
     @Transactional
-    public CartItem updateQuantity(Long itemId, int qty) {
-        if(qty <=0) throw new IllegalArgumentException("Quantity must be > 0");
-        CartItem item = cartRepo.findById(itemId)
-            .orElseThrow(() -> new BookNotFoundException("Cart item " + itemId + " not found"));
-        if(item.getBook().getStock() < qty) throw new InsufficientStockException("Only " + item.getBook().getStock() + " left");
-        item.setQuantity(qty);
-        return cartRepo.save(item);
+    public void removeItem(User currentUser, Long cartItemId) {
+        log.info("Remove cart item user={} itemId={}", currentUser.getUsername(), cartItemId);
+        CartItem item = cartItemRepo.findById(cartItemId).orElseThrow(() -> new EntityNotFoundException("Item not found"));
+        if (!item.getCart().getUser().getId().equals(currentUser.getId())) {
+            throw new AccessDeniedException("Not your cart item");
+        }
+        item.getCart().getItems().remove(item);
+        cartItemRepo.delete(item);
     }
 
+    // Full checkout with Order entity, factory, payment strategy, locking, idempotency
     @Transactional
-    public void removeItem(Long itemId) {
-        cartRepo.deleteById(itemId);
-    }
+    public OrderResponse checkout(User currentUser, String paymentType, String idempotencyKey) {
+        if (idempotencyKey == null) idempotencyKey = UUID.randomUUID().toString();
+        log.info("Checkout start user={} paymentType={} idemKey={}", currentUser.getUsername(), paymentType, idempotencyKey);
 
-    @Transactional
-    public OrderSummary checkout(String userId) {
-        List<CartItem> items = cartRepo.findByUserId(userId);
-        if(items.isEmpty()) throw new CartEmptyException("Cart is empty, add books first");
-        double total = items.stream().mapToDouble(i -> i.getBook().getPrice() * i.getQuantity()).sum();
-
-        // Reduce stock
-        for(CartItem item : items) {
-            Book b = item.getBook();
-            b.setStock(b.getStock() - item.getQuantity());
-            bookRepo.save(b);
+        // idempotency - return existing order if key already processed
+        var existing = orderRepo.findByIdempotencyKey(idempotencyKey);
+        if (existing.isPresent()) {
+            log.info("Idempotent checkout hit key={}", idempotencyKey);
+            return toOrderResponse(existing.get());
         }
 
-        OrderSummary summary = OrderSummary.builder()
-            .items(new ArrayList<>(items))
-            .total(total)
-            .orderDate(LocalDateTime.now())
-            .orderId(UUID.randomUUID().toString())
-            .build();
+        //  Pessimistic lock on cart to prevent double checkout
+        Cart cart = cartRepo.findByUserIdForUpdate(currentUser.getId())
+                .orElseThrow(() -> new EntityNotFoundException("Cart empty"));
+        if (cart.getItems().isEmpty()) throw new IllegalStateException("Cart empty");
 
-        cartRepo.deleteByUserId(userId);
-        return summary;
+        // Lock books and check stock atomically
+        for (CartItem ci : cart.getItems()) {
+            Book book = bookRepo.findByIdForUpdate(ci.getBook().getId())
+                    .orElseThrow(() -> new EntityNotFoundException("Book not found"));
+            if (book.getStock() < ci.getQuantity()) {
+                throw new IllegalStateException("Out of stock for " + book.getTitle());
+            }
+            book.setStock(book.getStock() - ci.getQuantity());
+            bookRepo.save(book);
+        }
+
+        // Factory method
+        Order order = Order.createFrom(cart, currentUser, idempotencyKey);
+
+        // Payment Strategy
+        PaymentStrategy strategy = paymentStrategies.get(paymentType.toUpperCase());
+        if (strategy == null) throw new IllegalArgumentException("Unsupported payment type: " + paymentType);
+        boolean paid = strategy.pay(order);
+        order.setPaymentStatus(paid ? PaymentStatus.SUCCESS : PaymentStatus.FAILED);
+        order.setStatus(paid ? OrderStatus.PAID : OrderStatus.FAILED);
+
+        Order saved = orderRepo.save(order);
+
+        // Clear cart after successful save
+        cart.getItems().clear();
+        cartRepo.save(cart);
+
+        log.info("Checkout completed orderId={} user={} total={}", saved.getId(), currentUser.getUsername(), saved.getTotalAmount());
+        return toOrderResponse(saved);
+    }
+
+    private CartItemResponse toResponse(CartItem ci) {
+        return CartItemResponse.builder()
+                .id(ci.getId()).bookId(ci.getBook().getId()).bookTitle(ci.getBook().getTitle())
+                .quantity(ci.getQuantity()).priceSnapshot(ci.getPriceSnapshot())
+                .lineTotal(ci.getPriceSnapshot()*ci.getQuantity()).build();
+    }
+    private OrderResponse toOrderResponse(Order o) {
+        return OrderResponse.builder()
+                .id(o.getId()).status(o.getStatus()).paymentStatus(o.getPaymentStatus())
+                .totalAmount(o.getTotalAmount()).createdAt(o.getCreatedAt())
+                .items(o.getItems().stream().map(oi -> OrderResponse.OrderItemDto.builder()
+                        .bookTitle(oi.getBook().getTitle()).quantity(oi.getQuantity()).priceSnapshot(oi.getPriceSnapshot()).build()).toList())
+                .build();
     }
 }

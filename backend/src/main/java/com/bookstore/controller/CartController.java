@@ -1,40 +1,48 @@
+
 package com.bookstore.controller;
-import com.bookstore.dto.OrderSummary;
-import com.bookstore.model.CartItem;
+
+import com.bookstore.dto.*;
+import com.bookstore.entity.User;
 import com.bookstore.service.CartService;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.*;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Pageable;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
-import java.util.List;
 
-@RestController @RequestMapping("/api/cart") @CrossOrigin(origins = "http://localhost:3000")
+@RestController
+@RequestMapping("/api/cart")
+@RequiredArgsConstructor
 public class CartController {
-    @Autowired private CartService cartService;
 
-    @GetMapping("/{userId}")
-    public ResponseEntity<List<CartItem>> getCart(@PathVariable String userId) {
-        return ResponseEntity.ok(cartService.getCart(userId));
+    private final CartService cartService;
+
+    // userId path param - use @AuthenticationPrincipal
+    @GetMapping
+    public CartResponse getCart(@AuthenticationPrincipal User currentUser, Pageable pageable) {
+        return cartService.getCart(currentUser, pageable);
     }
 
-    @PostMapping("/{userId}/add/{bookId}")
-    public ResponseEntity<CartItem> add(@PathVariable String userId, @PathVariable Long bookId,
-                                        @RequestParam(defaultValue = "1") int quantity) {
-        return new ResponseEntity<>(cartService.addToCart(userId, bookId, quantity), HttpStatus.CREATED);
+    @PostMapping("/add")
+    public CartItemResponse add(@AuthenticationPrincipal User currentUser,
+                                @RequestParam Long bookId, @RequestParam int quantity) {
+        return cartService.addToCart(currentUser, bookId, quantity);
     }
 
-    @PutMapping("/update/{itemId}")
-    public ResponseEntity<CartItem> update(@PathVariable Long itemId, @RequestParam int quantity) {
-        return ResponseEntity.ok(cartService.updateQuantity(itemId, quantity));
+    @PutMapping("/items/{itemId}")
+    public CartItemResponse update(@AuthenticationPrincipal User currentUser,
+                                   @PathVariable Long itemId, @RequestParam int quantity) {
+        return cartService.updateQuantity(currentUser, itemId, quantity);
     }
 
-    @DeleteMapping("/remove/{itemId}")
-    public ResponseEntity<Void> remove(@PathVariable Long itemId) {
-        cartService.removeItem(itemId);
-        return ResponseEntity.noContent().build();
+    @DeleteMapping("/items/{itemId}")
+    public void remove(@AuthenticationPrincipal User currentUser, @PathVariable Long itemId) {
+        cartService.removeItem(currentUser, itemId);
     }
 
-    @PostMapping("/{userId}/checkout")
-    public ResponseEntity<OrderSummary> checkout(@PathVariable String userId) {
-        return ResponseEntity.ok(cartService.checkout(userId));
+    @PostMapping("/checkout")
+    public OrderResponse checkout(@AuthenticationPrincipal User currentUser,
+                                 @RequestParam(defaultValue = "CARD") String paymentType,
+                                 @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        return cartService.checkout(currentUser, paymentType, idempotencyKey);
     }
 }

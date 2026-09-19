@@ -1,18 +1,26 @@
+
 package com.bookstore.controller;
-import com.bookstore.model.Book;
-import com.bookstore.service.BookService;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.ResponseEntity;
+
+import com.bookstore.dto.BookResponse;
+import com.bookstore.entity.Book;
+import com.bookstore.repository.BookRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.web.bind.annotation.*;
-import java.util.List;
 
-@RestController @RequestMapping("/api/books") @CrossOrigin(origins = "http://localhost:3000")
+@RestController
+@RequestMapping("/api/books")
+@RequiredArgsConstructor
 public class BookController {
-    @Autowired private BookService bookService;
 
+    private final BookRepository bookRepo;
+
+    //Return DTO not entity,Pagination
     @GetMapping
-    public ResponseEntity<List<Book>> getAll() { return ResponseEntity.ok(bookService.getAllBooks()); }
-
-    @GetMapping("/{id}")
-    public ResponseEntity<Book> getOne(@PathVariable Long id) { return ResponseEntity.ok(bookService.getBookById(id)); }
+    public Page<BookResponse> list(Pageable pageable) {
+        return bookRepo.findAll(pageable).map(b -> BookResponse.builder()
+                .id(b.getId()).title(b.getTitle()).author(b.getAuthor())
+                .price(b.getPrice()).stock(b.getStock()).build());
+    }
 }

@@ -1,36 +1,41 @@
+
 package com.bookstore.exception;
-import com.bookstore.dto.ErrorResponse;
-import jakarta.servlet.http.HttpServletRequest;
+
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.*;
+import java.util.*;
 
-@RestControllerAdvice @Slf4j
+@RestControllerAdvice
+@Slf4j
 public class GlobalExceptionHandler {
 
-    @ExceptionHandler(BookNotFoundException.class)
-    public ResponseEntity<ErrorResponse> handleNotFound(BookNotFoundException ex, HttpServletRequest req) {
-        log.error("Not found: {}", ex.getMessage());
-        ErrorResponse err = ErrorResponse.builder()
-            .timestamp(java.time.LocalDateTime.now())
-            .status(404).error("NOT_FOUND").message(ex.getMessage()).path(req.getRequestURI()).build();
-        return new ResponseEntity<>(err, HttpStatus.NOT_FOUND);
+    // Bean validation -> 400 with field details, not 500
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex) {
+        Map<String, String> fieldErrors = new HashMap<>();
+        ex.getBindingResult().getFieldErrors().forEach(fe -> fieldErrors.put(fe.getField(), fe.getDefaultMessage()));
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("error", "Validation failed");
+        body.put("fields", fieldErrors);
+        return ResponseEntity.badRequest().body(body);
     }
 
-    @ExceptionHandler({InsufficientStockException.class, CartEmptyException.class, IllegalArgumentException.class})
-    public ResponseEntity<ErrorResponse> handleBadRequest(RuntimeException ex, HttpServletRequest req) {
-        ErrorResponse err = ErrorResponse.builder()
-            .timestamp(java.time.LocalDateTime.now())
-            .status(400).error("BAD_REQUEST").message(ex.getMessage()).path(req.getRequestURI()).build();
-        return new ResponseEntity<>(err, HttpStatus.BAD_REQUEST);
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<Map<String, String>> handleAccess(AccessDeniedException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", ex.getMessage()));
+    }
+
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<Map<String, String>> handleIllegalState(IllegalStateException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", ex.getMessage()));
     }
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<ErrorResponse> handleGeneric(Exception ex, HttpServletRequest req) {
-        log.error("Unhandled: ", ex);
-        ErrorResponse err = ErrorResponse.builder()
-            .timestamp(java.time.LocalDateTime.now())
-            .status(500).error("INTERNAL_ERROR").message("Something went wrong").path(req.getRequestURI()).build();
-        return new ResponseEntity<>(err, HttpStatus.INTERNAL_SERVER_ERROR);
+    public ResponseEntity<Map<String, String>> handleGeneral(Exception ex) {
+        log.error("Unhandled error", ex);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", "Something went wrong"));
     }
 }

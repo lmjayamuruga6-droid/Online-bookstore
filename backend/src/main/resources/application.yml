@@ -1,21 +1,23 @@
+
 server:
   port: 8080
 spring:
   datasource:
-    url: jdbc:h2:mem:bookstore;DB_CLOSE_DELAY=-1
+    url: jdbc:h2:mem:bookstore
     username: sa
-    password: sa
+    password: ""
   jpa:
-    hibernate.ddl-auto: create-drop
-    show-sql: true
-  h2.console:
-    enabled: true
-    path: /h2-console
-  sql.init.mode: always
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+  jackson:
+    serialization:
+      WRITE_DATES_AS_TIMESTAMPS: false
 
 app:
-  jwtSecret: bookstore-secret-key-2026-very-long-for-jwt-signing-atleast-256-bits
-  jwtExpirationMs: 86400000
+  jwt:
+    secret: ${JWT_SECRET:default-dev-secret-that-should-be-overridden-in-prod-must-be-32+chars-long}
+    expiration-ms: 86400000
 
 logging:
   level:
